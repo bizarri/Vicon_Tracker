@@ -19,6 +19,10 @@ expressed in the lab's coordinate frame (typically ENU, millimetres). The tool:
    orientation,
 4. sends the pose at a fixed rate, plus a GPS origin/home for GPS-less operation.
 
+> For an operator-focused walkthrough (calibrating the Vicon volume, defining the
+> tracked object, frame alignment, and flying), see
+> [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
+
 ## Requirements
 
 - Rust (stable, edition 2024). `rustup` recommended.
