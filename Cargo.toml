@@ -1,0 +1,17 @@
+[package]
+name = "vicon-drone-tracker"
+version = "0.1.0"
+edition = "2024"
+description = "Track a drone with a Vicon mocap system, filter with an EKF, stream pose to ArduPilot/PX4 over MAVLink"
+
+[features]
+default = []
+# Link against the native Vicon DataStream C SDK (set VICON_SDK_DIR).
+vicon = ["dep:vicon-sdk"]
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+mavlink = { version = "0.19.1", features = ["mav2-message-extensions"] }
+nalgebra = "0.35.0"
+vicon-sdk = { version = "0.1.0", optional = true }
