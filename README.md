@@ -22,6 +22,10 @@ expressed in the lab's coordinate frame (typically ENU, millimetres). The tool:
 > For an operator-focused walkthrough (calibrating the Vicon volume, defining the
 > tracked object, frame alignment, and flying), see
 > [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
+>
+> For moving the tool onto the Vicon PC, see
+> [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). For a reference of every runtime
+> mode/flag, see [`docs/MODES.md`](docs/MODES.md).
 
 ## Requirements
 
@@ -86,6 +90,9 @@ Run `--help` for the full option list. Key options:
 | `--max-coast-secs S` | Pause output after S seconds without a valid measurement. |
 | `--ang-noise-deg DEG` | Orientation uncertainty reported in covariance fields. |
 | `--origin "lat,lon,alt_m"` | Send GPS origin/home (needed without GPS). |
+| `--mock-hz HZ` | Mock source rate (default 100). |
+| `--mock-dropout` | Make the mock source simulate periodic marker occlusions. |
+| `--trace` | Print each pipeline stage (source → frame → EKF → pose → MAVLink) to stderr. Noisy at high `--send-hz`. |
 
 Because the default source is chosen at build time, a binary built with
 `--features vicon` defaults to `--source vicon`, and one without it defaults to
@@ -103,6 +110,30 @@ The message depends on the target autopilot:
 
 `--origin` sends `SET_GPS_GLOBAL_ORIGIN` and `SET_HOME_POSITION` (re-sent
 periodically), which is required for a GPS-less EKF to have a global reference.
+
+## Tracking state
+
+The tool reports its tracking state on stderr whenever it changes:
+
+| State | Meaning |
+|-------|---------|
+| `Idle` | No sample received yet. |
+| `Searching` | Samples arriving but no valid measurement ingested yet. |
+| `Tracking` | EKF initialized and being updated (or coasting within `--max-coast-secs`). |
+| `Lost` | No valid measurement for longer than `--max-coast-secs`; MAVLink output is paused until recovery. |
+
+Transitions are logged as `tracker: state changed A -> B (reason)`. On recovery
+the EKF is re-initialized and `reset_counter` is bumped so the autopilot knows
+the estimate restarted.
+
+## Diagnostics
+
+Pass `--trace` to print every stage of the pipeline to stderr: the raw sample
+received, the ENU→NED conversion, each EKF decision (init/update/coast/reject/
+stale), the predicted pose sent (NED position, body-FRD velocity, RPY), and each
+MAVLink send. It is useful on the mock source (`--source mock --trace`) to see
+the whole flow without hardware. Because trace writes synchronously to stderr,
+prefer it for debugging rather than during a live flight at high `--send-hz`.
 
 ## Coordinate frames
 
@@ -175,4 +206,5 @@ number of messages sent.
 | `src/frames.rs` | Coordinate-frame conversion (ENU/NED, FRD/FLU, yaw offset). |
 | `src/source.rs` | Pose-source interface and mock source. |
 | `src/vicon_source.rs` | Real Vicon SDK reader (feature-gated). |
+| `src/state.rs` | Tracking state machine (Idle/Searching/Tracking/Lost). |
 | `src/mav_out.rs` | Builds and sends MAVLink messages. |
