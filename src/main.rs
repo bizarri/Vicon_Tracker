@@ -3,6 +3,7 @@ mod ekf;
 mod frames;
 mod mav_out;
 mod source;
+mod state;
 #[cfg(feature = "vicon")]
 mod vicon_source;
 
@@ -21,9 +22,18 @@ use ekf::{Ekf, EkfConfig, Step};
 use frames::Converter;
 use mav_out::{MavSender, MsgKind, PoseMsg, host_time_us};
 use source::{MockSource, PoseSource, RawSample};
+use state::{TrackingState, TrackingStateMachine};
 
 const ORIGIN_RESEND: Duration = Duration::from_secs(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(2);
+
+macro_rules! trace {
+    ($self:expr, $($arg:tt)*) => {
+        if $self.trace {
+            eprintln!($($arg)*);
+        }
+    };
+}
 
 /// Everything that tracks the drone over time, so the receive loop stays simple.
 struct Tracker {
@@ -38,14 +48,46 @@ struct Tracker {
     reset_counter: u8,
     /// Latest input-frame attitude from Vicon (x, y, z, w).
     latest_att: Option<[f64; 4]>,
+    trace: bool,
+    state_machine: TrackingStateMachine,
 }
 
 impl Tracker {
+    /// Transition the state machine and log the change with the true prior state.
+    fn set_state(&mut self, new_state: TrackingState, reason: &str) {
+        let from = self.state_machine.state();
+        if self.state_machine.transition(new_state) {
+            eprintln!(
+                "tracker: state changed {} -> {} ({reason})",
+                from.as_str(),
+                new_state.as_str()
+            );
+        }
+    }
+
     fn handle(&mut self, s: RawSample) {
+        trace!(
+            self,
+            "[TRACE][RCV] t={:.4}s occl={} pos_m=[{:.3},{:.3},{:.3}] has_quat={}",
+            s.t,
+            s.occluded,
+            s.pos_m[0],
+            s.pos_m[1],
+            s.pos_m[2],
+            s.quat_xyzw.is_some()
+        );
+        if self.state_machine.state() == TrackingState::Idle {
+            self.set_state(TrackingState::Searching, "first sample");
+        }
         if s.occluded {
+            trace!(self, "[TRACE][EKF] occluded -> skip");
             return;
         }
         let p = self.converter.pos_to_ned(s.pos_m);
+        trace!(
+            self,
+            "[TRACE][FRM] enu->ned pos_ned=[{:.3},{:.3},{:.3}]", p[0], p[1], p[2]
+        );
         if self.needs_reinit || !self.ekf.is_initialized() {
             let after_outage = self.last_valid.is_some();
             self.ekf.init(s.t, p);
@@ -56,11 +98,40 @@ impl Tracker {
                     "tracker: measurement restored after outage, EKF re-initialized (reset_counter={})",
                     self.reset_counter
                 );
+                trace!(
+                    self,
+                    "[TRACE][EKF] Reinit after outage (reset_counter={})", self.reset_counter
+                );
+                self.set_state(TrackingState::Tracking, "recovery");
+            } else {
+                trace!(self, "[TRACE][EKF] Initialized");
+                self.set_state(TrackingState::Tracking, "EKF initialized");
             }
         } else {
             match self.ekf.process(s.t, p, self.gate) {
-                Step::Stale | Step::Rejected => return,
-                Step::Coasted | Step::Initialized | Step::Updated => {}
+                Step::Stale => {
+                    trace!(self, "[TRACE][EKF] Stale (dt<0) -> skip");
+                    return;
+                }
+                Step::Rejected => {
+                    trace!(
+                        self,
+                        "[TRACE][EKF] Rejected by gate (sigma>{}) -> skip", self.gate
+                    );
+                    return;
+                }
+                Step::Coasted => {
+                    trace!(self, "[TRACE][EKF] Coasted");
+                    self.set_state(TrackingState::Tracking, "coasting within max_coast");
+                }
+                Step::Initialized => {
+                    trace!(self, "[TRACE][EKF] Initialized");
+                    self.set_state(TrackingState::Tracking, "EKF initialized");
+                }
+                Step::Updated => {
+                    trace!(self, "[TRACE][EKF] Updated");
+                    self.set_state(TrackingState::Tracking, "measurement update");
+                }
             }
         }
         self.last_valid = Some(s.t);
@@ -79,6 +150,13 @@ impl Tracker {
                 "tracker: no valid measurement for {:.2}s, pausing MAVLink output",
                 now - lv
             );
+            trace!(
+                self,
+                "[TRACE][COAST] exceeded max_coast ({:.2}s > {:.2}s) -> pausing",
+                now - lv,
+                self.max_coast
+            );
+            self.set_state(TrackingState::Lost, "coast timeout");
             self.needs_reinit = true;
         }
     }
@@ -88,6 +166,24 @@ impl Tracker {
         let st = self.ekf.state();
         let att = self.converter.attitude_ned(self.latest_att);
         let v_body = att.rot.transpose() * Vector3::new(st[3], st[4], st[5]);
+        trace!(
+            self,
+            "[TRACE][POSE] now={:.4}s pred pos=[{:.3},{:.3},{:.3}] vel_ned=[{:.3},{:.3},{:.3}] vel_body_frd=[{:.3},{:.3},{:.3}] rpy=[{:.3},{:.3},{:.3}] reset={}",
+            now,
+            st[0],
+            st[1],
+            st[2],
+            st[3],
+            st[4],
+            st[5],
+            v_body.x,
+            v_body.y,
+            v_body.z,
+            att.rpy[0],
+            att.rpy[1],
+            att.rpy[2],
+            self.reset_counter
+        );
         PoseMsg {
             time_us: host_time_us(),
             pos_ned: [st[0], st[1], st[2]],
@@ -156,6 +252,8 @@ fn main() -> Result<()> {
         needs_reinit: false,
         reset_counter: 0,
         latest_att: None,
+        trace: cli.trace,
+        state_machine: TrackingStateMachine::new(),
     };
 
     let mut next_due = send_period;
@@ -192,6 +290,10 @@ fn main() -> Result<()> {
                 .map(|t| t.elapsed() >= ORIGIN_RESEND)
                 .unwrap_or(true)
         {
+            trace!(
+                &tracker,
+                "[TRACE][MAV] send_origin lat={:.6} lon={:.6} alt={:.3}", lat, lon, alt
+            );
             if let Err(e) = sender.send_origin(lat, lon, alt, host_time_us()) {
                 eprintln!("tracker: origin send failed: {e:#}");
             }
@@ -209,11 +311,22 @@ fn main() -> Result<()> {
                 .last_valid
                 .is_some_and(|lv| now - lv <= tracker.max_coast)
                 && tracker.ekf.is_initialized();
+            let initialized = tracker.ekf.is_initialized();
+            trace!(
+                &tracker,
+                "[TRACE][LOOP] now={:.4}s next_due={:.4}s has_valid={} initialized={} can_send={}",
+                now,
+                next_due,
+                tracker.last_valid.is_some(),
+                initialized,
+                can_send
+            );
             if can_send {
                 let pose = tracker.build_pose(now);
                 match sender.send_pose(&pose) {
                     Ok(_) => {
                         sent += 1;
+                        trace!(&tracker, "[TRACE][MAV] pose sent (sent={})", sent);
                         if !logged_first_send {
                             eprintln!("tracker: streaming {:?} to flight controller", msg_kind);
                             logged_first_send = true;

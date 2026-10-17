@@ -149,4 +149,8 @@ pub struct Cli {
     /// Simulate periodic occlusion dropouts with the mock source
     #[arg(long, default_value_t = false)]
     pub mock_dropout: bool,
+
+    /// Trace step-by-step pipeline execution (noisy at high send-hz)
+    #[arg(long)]
+    pub trace: bool,
 }
