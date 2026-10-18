@@ -6,8 +6,11 @@ physical steps are what actually matter most — the software is only as good as
 the calibration, the tracked object, and the coordinate-frame choices.
 
 > New to the tool? Read `README.md` first for build and option reference.
+> For how the program is structured and how to read its output, see
+> `docs/ARCHITECTURE.md`.
 > For transferring the tool to the Vicon PC, see `docs/DEPLOYMENT.md`.
 > For a reference of every runtime mode/flag, see `docs/MODES.md`.
+> For terminology, see `docs/GLOSSARY.md`.
 
 ---
 

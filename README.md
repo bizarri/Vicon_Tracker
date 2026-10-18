@@ -23,9 +23,13 @@ expressed in the lab's coordinate frame (typically ENU, millimetres). The tool:
 > tracked object, frame alignment, and flying), see
 > [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md).
 >
+> For how the program is structured and how to read its output step by step, see
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+>
 > For moving the tool onto the Vicon PC, see
 > [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). For a reference of every runtime
-> mode/flag, see [`docs/MODES.md`](docs/MODES.md).
+> mode/flag, see [`docs/MODES.md`](docs/MODES.md). For the terminology, see
+> [`docs/GLOSSARY.md`](docs/GLOSSARY.md).
 
 ## Requirements
 

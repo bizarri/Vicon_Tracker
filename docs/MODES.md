@@ -3,7 +3,9 @@
 A reference for the runtime "modes" of `vicon-drone-tracker`. Options are
 grouped by what they control. For the physical setup that must match these
 choices, see `docs/USER-GUIDE.md`; for transfer/build steps see
-`docs/DEPLOYMENT.md`.
+`docs/DEPLOYMENT.md`; for the module structure and an annotated output
+walkthrough, see `docs/ARCHITECTURE.md`; for terminology, see
+`docs/GLOSSARY.md`.
 
 Run `vicon-drone-tracker --help` for the authoritative list.
 
